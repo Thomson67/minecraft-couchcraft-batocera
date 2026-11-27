@@ -6,15 +6,15 @@ partagé et les manettes dans une seule fenêtre.
 
 ## Installer
 
-Ferme Minecraft et CLauncher avant d’installer cette version de test. Lance la
+Ferme Minecraft et CLauncher avant d’installer la mise à jour. Lance la
 commande suivante en SSH sur Batocera.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/install-minecraft-couchcraft.py -o /tmp/install-minecraft-couchcraft.py && python3 /tmp/install-minecraft-couchcraft.py
+curl -fsSL https://github.com/Thomson67/minecraft-couchcraft-batocera/releases/download/v0.2.0/install-minecraft-couchcraft.py -o /tmp/install-minecraft-couchcraft.py && python3 /tmp/install-minecraft-couchcraft.py
 ```
 
 1. Actualise les listes d’EmulationStation. Dans **Ports**, ouvre
-   **Minecraft 26.3 (Couchcraft)**. Dans CLauncher, déplace le pointeur avec le
+   **Minecraft**. Dans CLauncher, déplace le pointeur avec le
    stick gauche ou la croix, puis clique sur **Play** avec **A / ✕**.
    **Start / Options** lance directement **Play** depuis le lanceur.
    **Hotkey + Start** ferme Minecraft et CLauncher pour revenir à

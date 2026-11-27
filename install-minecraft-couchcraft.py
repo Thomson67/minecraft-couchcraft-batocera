@@ -21,6 +21,7 @@ import tarfile
 import time
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from urllib.parse import unquote
+import xml.etree.ElementTree as ET
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 ROOT = Path("/userdata/system/minecraft-couchcraft")
@@ -47,12 +48,15 @@ JAVA_RELEASE = re.compile(r"(25\.\d+\.\d+(?:\.\d+)?)\+(\d+)")
 MOD_RELEASE = re.compile(r"0\.2\.(\d+)")
 UPDATE_INTERVAL = 24 * 60 * 60
 INSTANCE = "Couchcraft"
-PORT = "Minecraft 26.3 (Couchcraft).sh"
+PORT = "Minecraft.sh"
+VERSIONED_PORT = "Minecraft 26.3 (Couchcraft).sh"
+RELEASE_TAG = "v0.2.0"
+RELEASE_RAW = f"https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/{RELEASE_TAG}"
 JVM_OPTIONS = "-Dfabric.debug.disableModIds=sodium,iris"
 
 ASSETS = {
   "input": [
-    "https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/entrees-manette-v5.py",
+    f"{RELEASE_RAW}/{INPUT_HELPER}",
     "sha256",
     "ef1006afdd7cf9d8bf6315d516da1d9734231673b38efddbb7563d4fd49930cf"
   ],
@@ -77,7 +81,7 @@ ASSETS = {
     "f9f2b221233397351dd877fbcd9b5084f377cb923826ecd1f66389e02adce7ed"
   ],
   "lan": [
-    f"https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/{LAN_MOD}",
+    f"{RELEASE_RAW}/{LAN_MOD}",
     "sha256",
     "eaa1bf9d4d9c54c459bd4bb13ef2457dd33f76e0720a0944c0cf6cd6d6974812"
   ]
@@ -553,6 +557,53 @@ def retire_legacy_port(ports):
         print(f"Ancienne entrée Couchcraft désactivée : {backup.name}")
 
 
+def migrate_port_name(ports, script):
+    old = ports / VERSIONED_PORT
+    if os.path.lexists(old):
+        if (old.is_symlink() or not old.is_file()
+                or old.read_bytes() != port_content(script, PORT_MARKER)):
+            return
+        # The new port already exists and uses this same generated entry point.
+        old.unlink()
+
+    gamelist = ports / "gamelist.xml"
+    if not gamelist.is_file():
+        return
+    try:
+        gamelist = gamelist.resolve()
+        source = gamelist.read_bytes()
+        parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True, insert_pis=True))
+        listing = ET.fromstring(source, parser=parser)
+        entries = {PORT: [], VERSIONED_PORT: []}
+        for game in listing.findall("game"):
+            path = game.findtext("path", "").strip()
+            for filename, matches in entries.items():
+                if path in (filename, f"./{filename}", str(ports / filename)):
+                    matches.append(game)
+                    break
+        candidates = entries[PORT] + entries[VERSIONED_PORT]
+        if not candidates:
+            return
+        entry, *duplicates = candidates
+        if not duplicates and entry.findtext("name") == "Minecraft" and entry in entries[PORT]:
+            return
+        entry.find("path").text = f"./{PORT}"
+        name = entry.find("name")
+        if name is None:
+            name = ET.SubElement(entry, "name")
+        name.text = "Minecraft"
+        for duplicate in duplicates:
+            for field in duplicate:
+                if isinstance(field.tag, str) and entry.find(field.tag) is None:
+                    entry.append(field)
+            listing.remove(duplicate)
+        if gamelist.read_bytes() == source:
+            write_atomic(gamelist, ET.tostring(listing, encoding="utf-8", xml_declaration=True),
+                         stat.S_IMODE(gamelist.stat().st_mode))
+    except (OSError, ET.ParseError) as error:
+        print(f"Gamelist Minecraft non modifiée : {error}", file=sys.stderr)
+
+
 def install(root, ports, runtime):
     port = ports / PORT
     if not port_is_managed(port):
@@ -576,6 +627,7 @@ def install(root, ports, runtime):
     enable_fullscreen(game)
     write_atomic(root / SCRIPT, Path(__file__).read_bytes(), 0o755)
     write_atomic(port, port_content(root / SCRIPT, PORT_MARKER), 0o755)
+    migrate_port_name(ports, root / SCRIPT)
     retire_legacy_port(ports)
     print(f"Couchcraft installé. Actualise les listes dans EmulationStation.\n{port}")
 
