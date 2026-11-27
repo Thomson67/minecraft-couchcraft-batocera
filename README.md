@@ -7,7 +7,7 @@ Port autonome pour Batocera **x86-64**, avec Minecraft Java, Fabric et Couchcraf
 Ferme Minecraft et CLauncher si une session est ouverte. Depuis une connexion SSH à Batocera, exécute cette commande.
 
 ```sh
-(cd /tmp && curl -fsSLO https://github.com/Thomson67/minecraft-couchcraft-batocera/releases/latest/download/install-minecraft-couchcraft.py && python3 install-minecraft-couchcraft.py)
+curl -fsSL https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/main/install.sh | bash
 ```
 
 La commande installe la [dernière release stable](https://github.com/Thomson67/minecraft-couchcraft-batocera/releases/latest). Une connexion Internet est nécessaire pour l’installation et le premier lancement.

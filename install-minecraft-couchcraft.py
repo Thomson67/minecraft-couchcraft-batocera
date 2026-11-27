@@ -14,15 +14,19 @@ import re
 import shlex
 import shutil
 import stat
+from struct import pack, pack_into
 import subprocess
 import sys
 import tarfile
 import time
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from urllib.parse import unquote
-from zipfile import BadZipFile, ZipFile
+import xml.etree.ElementTree as ET
+from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 ROOT = Path("/userdata/system/minecraft-couchcraft")
+GAME_STORAGE = Path("/userdata/saves/minecraft")
+PREVIOUS_GAME_STORAGE = Path("/userdata/windows/saves/minecraft")
 PORTS = Path("/userdata/roms/ports")
 PORT_MARKER = "# Minecraft Couchcraft - Batocera"
 SCRIPT = "install-minecraft-couchcraft.py"
@@ -32,17 +36,30 @@ LEGACY_MARKER = "# PartyDeck Batocera: Minecraft Java"
 
 VERSION = "26.3"
 APP = "CLauncher-1.0.3"
+PLAY_APP = "usr/bin/CLauncher-start"
+INPUT_HELPER = "entrees-manette-v5.py"
 JAVA = "25.0.5.1+2"
 MOD = "couchcraft.jar"
+LAN_MOD = "couchcraft-lan-auto-1.0.0-mc26.3.jar"
 LEGACY_MOD = "couchcraft-0.2.0.jar"
+CURSOR_CLASS = "dev/couchcraft/render/CouchHud.class"
+CURSOR_CLASS_SHA256 = "9ac03430d733d4ba79be69d311aa6d125d70de294b2e994f404db0daf5930ee7"
 JAVA_RELEASE = re.compile(r"(25\.\d+\.\d+(?:\.\d+)?)\+(\d+)")
 MOD_RELEASE = re.compile(r"0\.2\.(\d+)")
 UPDATE_INTERVAL = 24 * 60 * 60
 INSTANCE = "Couchcraft"
-PORT = "Minecraft 26.3 (Couchcraft).sh"
+PORT = "Minecraft.sh"
+VERSIONED_PORT = "Minecraft 26.3 (Couchcraft).sh"
+RELEASE_TAG = "v0.2.0"
+RELEASE_RAW = f"https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/{RELEASE_TAG}"
 JVM_OPTIONS = "-Dfabric.debug.disableModIds=sodium,iris"
 
 ASSETS = {
+  "input": [
+    f"{RELEASE_RAW}/{INPUT_HELPER}",
+    "sha256",
+    "ef1006afdd7cf9d8bf6315d516da1d9734231673b38efddbb7563d4fd49930cf"
+  ],
   "java": [
     "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5.1%2B2/OpenJDK25U-jre_x64_linux_hotspot_25.0.5.1_2.tar.gz",
     "sha256",
@@ -62,6 +79,11 @@ ASSETS = {
     "https://github.com/zortos293/Couchcraft/releases/download/v0.2.0/couchcraft-0.2.0.jar",
     "sha256",
     "f9f2b221233397351dd877fbcd9b5084f377cb923826ecd1f66389e02adce7ed"
+  ],
+  "lan": [
+    f"{RELEASE_RAW}/{LAN_MOD}",
+    "sha256",
+    "eaa1bf9d4d9c54c459bd4bb13ef2457dd33f76e0720a0944c0cf6cd6d6974812"
   ]
 }
 
@@ -184,6 +206,88 @@ def game_dir(data):
     return data / "instances" / INSTANCE / ".minecraft"
 
 
+def migrate_previous_storage(game, storage):
+    """Move the instance link off the previous test path, keeping its data as a backup."""
+    source = game.resolve()
+    target = storage.resolve()
+    if not source.is_dir():
+        raise ValueError(f"Ancien dossier Minecraft inaccessible : {source}")
+    if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        raise ValueError(f"Les dossiers Minecraft {source} et {target} contiennent déjà des données.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=game.parent, prefix=".minecraft-link-") as link_dir, \
+            TemporaryDirectory(dir=target.parent, prefix=".minecraft-migration-") as copy_dir:
+        link = Path(link_dir) / ".minecraft"
+        link.symlink_to(storage, target_is_directory=True)
+        staged = Path(copy_dir) / "minecraft"
+        shutil.copytree(source, staged, symlinks=True)
+        staged.rename(target)
+        try:
+            link.replace(game)
+        except OSError:
+            target.rename(staged)
+            raise
+    print(f"Données Minecraft copiées dans {storage}. Ancienne copie conservée dans {source}.")
+
+
+def relocate_game(game, storage):
+    """Keep the CLauncher game directory linked to the shared folders."""
+    target = storage.resolve()
+    if game.is_symlink():
+        linked = game.resolve()
+        if linked != target and linked == PREVIOUS_GAME_STORAGE.resolve():
+            migrate_previous_storage(game, storage)
+            linked = game.resolve()
+        if linked != target or not storage.is_dir():
+            raise ValueError(f"Lien d’instance Minecraft inattendu ou inaccessible : {game}")
+    else:
+        backup = game.with_name(".minecraft.avant-migration")
+        if (game.exists() and not game.is_dir()) or (target.exists() and not target.is_dir()):
+            raise ValueError(f"Un dossier Minecraft est attendu dans {game} et {storage}.")
+        target_has_data = target.is_dir() and any(target.iterdir())
+
+        # After an interruption, either finish linking the published copy or
+        # restore the original before trying the copy again.
+        if not game.exists() and backup.is_dir() and not target_has_data:
+            backup.rename(game)
+
+        if game.is_dir() and any(game.iterdir()):
+            if target_has_data or os.path.lexists(backup):
+                raise ValueError(f"Plusieurs dossiers Minecraft contiennent des données : {game}, {storage} ou {backup}.")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with TemporaryDirectory(dir=target.parent, prefix=".minecraft-migration-") as directory:
+                staged = Path(directory) / "minecraft"
+                shutil.copytree(game, staged, symlinks=True)
+                game.rename(backup)
+                try:
+                    staged.rename(target)
+                except OSError:
+                    backup.rename(game)
+                    raise
+            print(f"Données Minecraft copiées dans {storage}. Sauvegarde de migration : {backup}")
+        elif game.is_dir():
+            game.rmdir()
+
+        target.mkdir(parents=True, exist_ok=True)
+        game.symlink_to(storage, target_is_directory=True)
+
+    for name in ("saves", "mods", "resourcepacks", "config", "screenshots"):
+        (storage / name).mkdir(exist_ok=True)
+
+
+def enable_fullscreen(game):
+    options = game / "options.txt"
+    content = options.read_bytes() if options.exists() else b"version:5023\n"
+    updated, matches = re.subn(rb"(?m)^fullscreen:[^\r\n]*", b"fullscreen:true", content)
+    if not matches:
+        newline = b"\r\n" if b"\r\n" in content else b"\n"
+        if content and not content.endswith(b"\n"):
+            updated += newline
+        updated += b"fullscreen:true" + newline
+    if not options.exists() or updated != content:
+        write_atomic(options, updated)
+
+
 def mod_version(path):
     with ZipFile(path) as archive:
         info = json.loads(archive.read("fabric.mod.json"))
@@ -204,6 +308,30 @@ def install_mod(game):
     old = mods / LEGACY_MOD
     if old.is_file() and digest(old, "sha256") == ASSETS["couchcraft"][2]:
         old.unlink()
+    enable_primary_cursor(destination)
+
+
+def enable_primary_cursor(mod):
+    # Only change the unmodified upstream 0.2.0 JAR. Leave future releases
+    # and locally modified JARs to their own rendering implementations.
+    if digest(mod, "sha256") != ASSETS["couchcraft"][2]:
+        return
+    output = BytesIO()
+    with ZipFile(mod) as source, ZipFile(output, "w", ZIP_DEFLATED) as target:
+        cursor = source.read(CURSOR_CLASS)
+        if hashlib.sha256(cursor).hexdigest() != CURSOR_CLASS_SHA256:
+            raise ValueError("Classe de rendu Couchcraft 0.2.0 inattendue.")
+        # CouchHud.extract: replace !context.primary with context.pad != null.
+        # Both conditions use a getfield and a branch to the same destination.
+        original = bytes.fromhex("2b b4 00 32 9a 00 3d 2c b4 00 62")
+        replacement = bytes.fromhex("2b b4 00 5a c6 00 3d 2c b4 00 62")
+        if cursor.count(original) != 1:
+            raise ValueError("Condition de rendu du pointeur Couchcraft introuvable.")
+        for member in source.infolist():
+            content = (cursor.replace(original, replacement) if member.filename == CURSOR_CLASS
+                       else source.read(member))
+            target.writestr(member, content)
+    write_atomic(mod, output.getvalue())
 
 
 def latest_release(repo):
@@ -308,6 +436,48 @@ def install_clauncher(root, asset):
         extracted.rename(destination)
 
 
+def launcher_play_shortcut(original):
+    """Add F8 to the existing Play button in the official CLauncher 1.0.3 AppImage."""
+    if hashlib.sha256(original).hexdigest() != "ed2c4a40b842dc6e4df35876d9ca61babeb9ec4a4e028b61aff00ca917d4e4ec":
+        raise ValueError("Binaire CLauncher 1.0.3 inattendu pour le raccourci Start.")
+
+    play_call = 0x26C97   # Launcher::draw_ui, idle branch, Play button only
+    button = 0x114FB0     # ImGui::Button
+    key_pressed = 0xA5AF0 # ImGui::IsKeyPressed(key, flags, owner)
+    executable_header = 0xE8
+    executable_start = 0xA000
+    shortcut = 0x147CA1   # alignment padding before the read-only segment
+
+    # Execute the normal Button() first. If it returns false, tail-call
+    # IsKeyPressed(ImGuiKey_F8, None, Any), whose flags disable key repeat.
+    stack_adjust = bytes.fromhex("48 83 ec 08")
+    call_button = b"\xe8" + pack("<i", button - (shortcut + len(stack_adjust) + 5))
+    key_test = bytes.fromhex(
+        "48 83 c4 08"   # add rsp, 8
+        " 84 c0 75 0e" # test al, al; jump to ret if clicked
+        " bf 43 02 00 00 31 f6 31 d2" # edi = F8, esi = flags, edx = owner
+    )
+    setup = stack_adjust + call_button + key_test
+    tail_call = b"\xe9" + pack("<i", key_pressed - (shortcut + len(setup) + 5))
+    code = setup + tail_call + b"\xc3"
+
+    patched = bytearray(original)
+    patched[play_call:play_call + 5] = b"\xe8" + pack("<i", shortcut - (play_call + 5))
+    patched[shortcut:shortcut + len(code)] = code
+    size = shortcut + len(code) - executable_start
+    pack_into("<QQ", patched, executable_header + 32, size, size)
+    return patched
+
+
+def install_play_shortcut(app_dir):
+    target = app_dir / PLAY_APP
+    original = (app_dir / "usr/bin/CLauncher").read_bytes()
+    patched = launcher_play_shortcut(original)
+    if target.is_file() and target.read_bytes() == patched and os.access(target, os.X_OK):
+        return
+    write_atomic(target, patched, 0o755)
+
+
 def data_dir(root):
     return root / "home/.clauncher"
 
@@ -387,6 +557,53 @@ def retire_legacy_port(ports):
         print(f"Ancienne entrée Couchcraft désactivée : {backup.name}")
 
 
+def migrate_port_name(ports, script):
+    old = ports / VERSIONED_PORT
+    if os.path.lexists(old):
+        if (old.is_symlink() or not old.is_file()
+                or old.read_bytes() != port_content(script, PORT_MARKER)):
+            return
+        # The new port already exists and uses this same generated entry point.
+        old.unlink()
+
+    gamelist = ports / "gamelist.xml"
+    if not gamelist.is_file():
+        return
+    try:
+        gamelist = gamelist.resolve()
+        source = gamelist.read_bytes()
+        parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True, insert_pis=True))
+        listing = ET.fromstring(source, parser=parser)
+        entries = {PORT: [], VERSIONED_PORT: []}
+        for game in listing.findall("game"):
+            path = game.findtext("path", "").strip()
+            for filename, matches in entries.items():
+                if path in (filename, f"./{filename}", str(ports / filename)):
+                    matches.append(game)
+                    break
+        candidates = entries[PORT] + entries[VERSIONED_PORT]
+        if not candidates:
+            return
+        entry, *duplicates = candidates
+        if not duplicates and entry.findtext("name") == "Minecraft" and entry in entries[PORT]:
+            return
+        entry.find("path").text = f"./{PORT}"
+        name = entry.find("name")
+        if name is None:
+            name = ET.SubElement(entry, "name")
+        name.text = "Minecraft"
+        for duplicate in duplicates:
+            for field in duplicate:
+                if isinstance(field.tag, str) and entry.find(field.tag) is None:
+                    entry.append(field)
+            listing.remove(duplicate)
+        if gamelist.read_bytes() == source:
+            write_atomic(gamelist, ET.tostring(listing, encoding="utf-8", xml_declaration=True),
+                         stat.S_IMODE(gamelist.stat().st_mode))
+    except (OSError, ET.ParseError) as error:
+        print(f"Gamelist Minecraft non modifiée : {error}", file=sys.stderr)
+
+
 def install(root, ports, runtime):
     port = ports / PORT
     if not port_is_managed(port):
@@ -396,13 +613,21 @@ def install(root, ports, runtime):
         select_java(runtime, install_java25(runtime, ASSETS["java"]))
     check_java25(java)
     install_clauncher(root, ASSETS["launcher"])
+    install_play_shortcut(root / APP)
+    download(ASSETS["input"], root / INPUT_HELPER)
     data = data_dir(root)
     migrate_legacy_data(data)
     game = seed_instance(data, java)
+    relocate_game(game, GAME_STORAGE)
     download(ASSETS["fabric"], data / "cache/fabric-installer.jar")
     install_mod(game)
+    lan = game / "mods" / LAN_MOD
+    if not lan.with_suffix(".jar.disabled").is_file():
+        download(ASSETS["lan"], lan)
+    enable_fullscreen(game)
     write_atomic(root / SCRIPT, Path(__file__).read_bytes(), 0o755)
     write_atomic(port, port_content(root / SCRIPT, PORT_MARKER), 0o755)
+    migrate_port_name(ports, root / SCRIPT)
     retire_legacy_port(ports)
     print(f"Couchcraft installé. Actualise les listes dans EmulationStation.\n{port}")
 
@@ -414,11 +639,25 @@ def launcher_env(root):
         if authority.is_file():
             env["XAUTHORITY"] = str(authority)
     env.update(HOME=str(root / "home"), APPDIR=str(root / APP))
+    if env.get("WAYLAND_DISPLAY"):
+        # Keep both windows observable by the keyboard helper on XWayland.
+        env.setdefault("SDL_VIDEO_DRIVER", "x11")
     # The upstream launcher ticks its performance mods option on every startup.
     # Fabric skips these conflicting mod IDs even if the launcher downloads them.
     previous = env.get("JAVA_TOOL_OPTIONS", "").strip()
     env["JAVA_TOOL_OPTIONS"] = f"{previous} {JVM_OPTIONS}".lstrip()
     return env
+
+
+def start_input_helper(root, env, mode, log_name):
+    try:
+        with (root / log_name).open("wb") as output:
+            subprocess.Popen(
+                [sys.executable, root / INPUT_HELPER, mode, str(os.getpid())],
+                env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+            )
+    except OSError as error:
+        print(f"Entrée manette ({mode}) indisponible : {error}", file=sys.stderr)
 
 
 def main():
@@ -436,7 +675,7 @@ def main():
             if args.action == "installer":
                 install(root, PORTS, runtime)
                 return 0
-            app = root / APP / "AppRun"
+            app = root / APP / PLAY_APP
             java = runtime / "current/bin/java"
             version = check_java25(java)
             if args.action == "mettre-a-jour":
@@ -447,11 +686,16 @@ def main():
                 raise ValueError("CLauncher est introuvable. Relance l’installateur.")
             if args.action == "verifier":
                 print(f"CLauncher · {app}\nDonnées · {data_dir(root)}")
+                print(f"Mondes et contenus · {game_dir(data_dir(root)).resolve()}")
+                print(f"Journal de la manette CLauncher · {root / 'manette-clauncher.log'}")
+                print(f"Journal du clavier virtuel · {root / 'clavier-virtuel.log'}")
                 return 0
             check_updates(root, runtime)
             # Hold the lock until CLauncher exits, including its game session.
             os.set_inheritable(lock.fileno(), True)
             os.chdir(root)
+            start_input_helper(root, env, "souris", "manette-clauncher.log")
+            start_input_helper(root, env, "clavier", "clavier-virtuel.log")
             os.execve(app, [app], env)
     except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError, BadZipFile) as error:
         parser.exit(1, f"Minecraft Couchcraft : {error}\n")
