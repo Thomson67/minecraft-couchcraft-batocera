@@ -20,7 +20,7 @@ import tarfile
 import time
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from urllib.parse import unquote
-from zipfile import BadZipFile, ZipFile
+from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 ROOT = Path("/userdata/system/minecraft-couchcraft")
 PORTS = Path("/userdata/roms/ports")
@@ -32,9 +32,14 @@ LEGACY_MARKER = "# PartyDeck Batocera: Minecraft Java"
 
 VERSION = "26.3"
 APP = "CLauncher-1.0.3"
+PAD_LAUNCHER = "usr/bin/CLauncher-manette"
+LAUNCHER_SHA256 = "ed2c4a40b842dc6e4df35876d9ca61babeb9ec4a4e028b61aff00ca917d4e4ec"
+PAD_LAUNCHER_SHA256 = "135d7bb148985b8cab8eb86e590b5dc8c2e9594a3360425d8265312ff645aca3"
 JAVA = "25.0.5.1+2"
 MOD = "couchcraft.jar"
 LEGACY_MOD = "couchcraft-0.2.0.jar"
+CURSOR_CLASS = "dev/couchcraft/render/CouchHud.class"
+CURSOR_CLASS_SHA256 = "9ac03430d733d4ba79be69d311aa6d125d70de294b2e994f404db0daf5930ee7"
 JAVA_RELEASE = re.compile(r"(25\.\d+\.\d+(?:\.\d+)?)\+(\d+)")
 MOD_RELEASE = re.compile(r"0\.2\.(\d+)")
 UPDATE_INTERVAL = 24 * 60 * 60
@@ -204,6 +209,30 @@ def install_mod(game):
     old = mods / LEGACY_MOD
     if old.is_file() and digest(old, "sha256") == ASSETS["couchcraft"][2]:
         old.unlink()
+    enable_primary_cursor(destination)
+
+
+def enable_primary_cursor(mod):
+    # Only change the unmodified upstream 0.2.0 JAR. Leave future releases
+    # and locally modified JARs to their own rendering implementations.
+    if digest(mod, "sha256") != ASSETS["couchcraft"][2]:
+        return
+    output = BytesIO()
+    with ZipFile(mod) as source, ZipFile(output, "w", ZIP_DEFLATED) as target:
+        cursor = source.read(CURSOR_CLASS)
+        if hashlib.sha256(cursor).hexdigest() != CURSOR_CLASS_SHA256:
+            raise ValueError("Classe de rendu Couchcraft 0.2.0 inattendue.")
+        # CouchHud.extract: replace !context.primary with context.pad != null.
+        # Both conditions use a getfield and a branch to the same destination.
+        original = bytes.fromhex("2b b4 00 32 9a 00 3d 2c b4 00 62")
+        replacement = bytes.fromhex("2b b4 00 5a c6 00 3d 2c b4 00 62")
+        if cursor.count(original) != 1:
+            raise ValueError("Condition de rendu du pointeur Couchcraft introuvable.")
+        for member in source.infolist():
+            content = (cursor.replace(original, replacement) if member.filename == CURSOR_CLASS
+                       else source.read(member))
+            target.writestr(member, content)
+    write_atomic(mod, output.getvalue())
 
 
 def latest_release(repo):
@@ -308,6 +337,22 @@ def install_clauncher(root, asset):
         extracted.rename(destination)
 
 
+def enable_launcher_gamepad(app):
+    target = app / PAD_LAUNCHER
+    if target.is_file() and digest(target, "sha256") == PAD_LAUNCHER_SHA256:
+        return
+    original = (app / "usr/bin/CLauncher").read_bytes()
+    offset = 0x22BFD
+    # CLauncher 1.0.3 x86-64: ConfigFlags |= NavEnableKeyboard | NavEnableGamepad.
+    if (hashlib.sha256(original).hexdigest() != LAUNCHER_SHA256
+            or original[offset:offset + 3] != bytes.fromhex("83 08 01")):
+        raise ValueError("Binaire CLauncher 1.0.3 inattendu pour la navigation à la manette.")
+    patched = original[:offset + 2] + b"\x03" + original[offset + 3:]
+    if hashlib.sha256(patched).hexdigest() != PAD_LAUNCHER_SHA256:
+        raise ValueError("Échec de vérification du binaire CLauncher pour la manette.")
+    write_atomic(target, patched, 0o755)
+
+
 def data_dir(root):
     return root / "home/.clauncher"
 
@@ -396,6 +441,7 @@ def install(root, ports, runtime):
         select_java(runtime, install_java25(runtime, ASSETS["java"]))
     check_java25(java)
     install_clauncher(root, ASSETS["launcher"])
+    enable_launcher_gamepad(root / APP)
     data = data_dir(root)
     migrate_legacy_data(data)
     game = seed_instance(data, java)
@@ -436,7 +482,7 @@ def main():
             if args.action == "installer":
                 install(root, PORTS, runtime)
                 return 0
-            app = root / APP / "AppRun"
+            app = root / APP / PAD_LAUNCHER
             java = runtime / "current/bin/java"
             version = check_java25(java)
             if args.action == "mettre-a-jour":
