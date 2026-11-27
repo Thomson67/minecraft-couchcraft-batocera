@@ -34,7 +34,7 @@ jeu. L’ancienne entrée gérée reçoit le suffixe `.sh.disabled`.
 
 ## Mondes et contenus
 
-Le dossier de jeu est accessible dans `/userdata/windows/saves/minecraft`.
+Le dossier de jeu est accessible dans `/userdata/saves/minecraft`.
 
 | Sous-dossier | Contenu |
 | --- | --- |
@@ -51,7 +51,7 @@ Lors de la migration, le port garde l’ancienne copie sous
 Pour désactiver le LAN automatique, ferme le jeu et renomme
 `couchcraft-lan-auto-1.0.0-mc26.3.jar` en
 `couchcraft-lan-auto-1.0.0-mc26.3.jar.disabled` dans
-`/userdata/windows/saves/minecraft/mods`.
+`/userdata/saves/minecraft/mods`.
 Pour le réactiver, enlève le suffixe `.disabled`.
 
 ## Clavier virtuel

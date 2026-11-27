@@ -24,7 +24,8 @@ from urllib.parse import unquote
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 ROOT = Path("/userdata/system/minecraft-couchcraft")
-GAME_STORAGE = Path("/userdata/windows/saves/minecraft")
+GAME_STORAGE = Path("/userdata/saves/minecraft")
+PREVIOUS_GAME_STORAGE = Path("/userdata/windows/saves/minecraft")
 PORTS = Path("/userdata/roms/ports")
 PORT_MARKER = "# Minecraft Couchcraft - Batocera"
 SCRIPT = "install-minecraft-couchcraft.py"
@@ -201,14 +202,42 @@ def game_dir(data):
     return data / "instances" / INSTANCE / ".minecraft"
 
 
+def migrate_previous_storage(game, storage):
+    """Move the instance link off the previous test path, keeping its data as a backup."""
+    source = game.resolve()
+    target = storage.resolve()
+    if not source.is_dir():
+        raise ValueError(f"Ancien dossier Minecraft inaccessible : {source}")
+    if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        raise ValueError(f"Les dossiers Minecraft {source} et {target} contiennent déjà des données.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=game.parent, prefix=".minecraft-link-") as link_dir, \
+            TemporaryDirectory(dir=target.parent, prefix=".minecraft-migration-") as copy_dir:
+        link = Path(link_dir) / ".minecraft"
+        link.symlink_to(storage, target_is_directory=True)
+        staged = Path(copy_dir) / "minecraft"
+        shutil.copytree(source, staged, symlinks=True)
+        staged.rename(target)
+        try:
+            link.replace(game)
+        except OSError:
+            target.rename(staged)
+            raise
+    print(f"Données Minecraft copiées dans {storage}. Ancienne copie conservée dans {source}.")
+
+
 def relocate_game(game, storage):
     """Keep the CLauncher game directory linked to the shared folders."""
+    target = storage.resolve()
     if game.is_symlink():
-        if game.resolve() != storage.resolve() or not storage.is_dir():
+        linked = game.resolve()
+        if linked != target and linked == PREVIOUS_GAME_STORAGE.resolve():
+            migrate_previous_storage(game, storage)
+            linked = game.resolve()
+        if linked != target or not storage.is_dir():
             raise ValueError(f"Lien d’instance Minecraft inattendu ou inaccessible : {game}")
     else:
         backup = game.with_name(".minecraft.avant-migration")
-        target = storage.resolve()
         if (game.exists() and not game.is_dir()) or (target.exists() and not target.is_dir()):
             raise ValueError(f"Un dossier Minecraft est attendu dans {game} et {storage}.")
         target_has_data = target.is_dir() and any(target.iterdir())
