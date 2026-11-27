@@ -24,6 +24,7 @@ from urllib.parse import unquote
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 ROOT = Path("/userdata/system/minecraft-couchcraft")
+GAME_STORAGE = Path("/userdata/windows/saves/minecraft")
 PORTS = Path("/userdata/roms/ports")
 PORT_MARKER = "# Minecraft Couchcraft - Batocera"
 SCRIPT = "install-minecraft-couchcraft.py"
@@ -198,6 +199,47 @@ def select_java(runtime, java):
 
 def game_dir(data):
     return data / "instances" / INSTANCE / ".minecraft"
+
+
+def relocate_game(game, storage):
+    """Keep the CLauncher game directory linked to the shared folders."""
+    if game.is_symlink():
+        if game.resolve() != storage.resolve() or not storage.is_dir():
+            raise ValueError(f"Lien d’instance Minecraft inattendu ou inaccessible : {game}")
+    else:
+        backup = game.with_name(".minecraft.avant-migration")
+        target = storage.resolve()
+        if (game.exists() and not game.is_dir()) or (target.exists() and not target.is_dir()):
+            raise ValueError(f"Un dossier Minecraft est attendu dans {game} et {storage}.")
+        target_has_data = target.is_dir() and any(target.iterdir())
+
+        # After an interruption, either finish linking the published copy or
+        # restore the original before trying the copy again.
+        if not game.exists() and backup.is_dir() and not target_has_data:
+            backup.rename(game)
+
+        if game.is_dir() and any(game.iterdir()):
+            if target_has_data or os.path.lexists(backup):
+                raise ValueError(f"Plusieurs dossiers Minecraft contiennent des données : {game}, {storage} ou {backup}.")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with TemporaryDirectory(dir=target.parent, prefix=".minecraft-migration-") as directory:
+                staged = Path(directory) / "minecraft"
+                shutil.copytree(game, staged, symlinks=True)
+                game.rename(backup)
+                try:
+                    staged.rename(target)
+                except OSError:
+                    backup.rename(game)
+                    raise
+            print(f"Données Minecraft copiées dans {storage}. Sauvegarde de migration : {backup}")
+        elif game.is_dir():
+            game.rmdir()
+
+        target.mkdir(parents=True, exist_ok=True)
+        game.symlink_to(storage, target_is_directory=True)
+
+    for name in ("saves", "mods", "resourcepacks", "config", "screenshots"):
+        (storage / name).mkdir(exist_ok=True)
 
 
 def enable_fullscreen(game):
@@ -496,6 +538,7 @@ def install(root, ports, runtime):
     data = data_dir(root)
     migrate_legacy_data(data)
     game = seed_instance(data, java)
+    relocate_game(game, GAME_STORAGE)
     download(ASSETS["fabric"], data / "cache/fabric-installer.jar")
     install_mod(game)
     lan = game / "mods" / LAN_MOD
@@ -562,6 +605,7 @@ def main():
                 raise ValueError("CLauncher est introuvable. Relance l’installateur.")
             if args.action == "verifier":
                 print(f"CLauncher · {app}\nDonnées · {data_dir(root)}")
+                print(f"Mondes et contenus · {game_dir(data_dir(root)).resolve()}")
                 print(f"Journal de la manette CLauncher · {root / 'manette-clauncher.log'}")
                 print(f"Journal du clavier virtuel · {root / 'clavier-virtuel.log'}")
                 return 0

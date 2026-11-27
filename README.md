@@ -27,15 +27,31 @@ curl -fsSL https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-bato
 4. Chaque monde solo s’ouvre automatiquement au LAN. Le port apparaît dans le
    chat. Les autres machines rejoignent le monde depuis **Multijoueur**.
 
-Les données, dont le runtime Java 25 et les mondes, sont dans
+Le lanceur, le runtime Java 25 et les fichiers partagés du jeu sont dans
 `/userdata/system/minecraft-couchcraft`. Au premier passage depuis l’ancien
-test Couchcraft, l’installateur copie son profil, ses mondes et son cache de
+test Couchcraft, l’installateur reprend son profil, ses mondes et son cache de
 jeu. L’ancienne entrée gérée reçoit le suffixe `.sh.disabled`.
+
+## Mondes et contenus
+
+Le dossier de jeu est accessible dans `/userdata/windows/saves/minecraft`.
+
+| Sous-dossier | Contenu |
+| --- | --- |
+| `saves` | Mondes. Les datapacks se placent dans `saves/<monde>/datapacks`. |
+| `mods` | Mods Fabric pour Minecraft 26.3. |
+| `resourcepacks` | Packs de ressources. Active-les ensuite dans Minecraft. |
+| `config` | Réglages des mods, dont Couchcraft. |
+| `screenshots` | Captures Minecraft. |
+
+Lors de la migration, le port garde l’ancienne copie sous
+`home/.clauncher/instances/Couchcraft/.minecraft.avant-migration` dans
+`/userdata/system/minecraft-couchcraft`.
 
 Pour désactiver le LAN automatique, ferme le jeu et renomme
 `couchcraft-lan-auto-1.0.0-mc26.3.jar` en
 `couchcraft-lan-auto-1.0.0-mc26.3.jar.disabled` dans
-`home/.clauncher/instances/Couchcraft/.minecraft/mods` sous le dossier du port.
+`/userdata/windows/saves/minecraft/mods`.
 Pour le réactiver, enlève le suffixe `.disabled`.
 
 ## Clavier virtuel
