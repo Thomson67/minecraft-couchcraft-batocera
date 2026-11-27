@@ -36,7 +36,7 @@ LEGACY_MARKER = "# PartyDeck Batocera: Minecraft Java"
 VERSION = "26.3"
 APP = "CLauncher-1.0.3"
 PLAY_APP = "usr/bin/CLauncher-start"
-INPUT_HELPER = "entrees-manette-v4.py"
+INPUT_HELPER = "entrees-manette-v5.py"
 JAVA = "25.0.5.1+2"
 MOD = "couchcraft.jar"
 LAN_MOD = "couchcraft-lan-auto-1.0.0-mc26.3.jar"
@@ -52,9 +52,9 @@ JVM_OPTIONS = "-Dfabric.debug.disableModIds=sodium,iris"
 
 ASSETS = {
   "input": [
-    "https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/entrees-manette-v4.py",
+    "https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/entrees-manette-v5.py",
     "sha256",
-    "ebb68819fe0771107aa8e6f039261105baf03f807e8df0b300f690065d6c232b"
+    "ef1006afdd7cf9d8bf6315d516da1d9734231673b38efddbb7563d4fd49930cf"
   ],
   "java": [
     "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5.1%2B2/OpenJDK25U-jre_x64_linux_hotspot_25.0.5.1_2.tar.gz",
