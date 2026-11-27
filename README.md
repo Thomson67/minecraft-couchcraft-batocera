@@ -24,11 +24,19 @@ curl -fsSL https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-bato
    Une fois dans le monde, appuie sur **Start / Options** sur la manette
    libre de J2 et valide son profil avec **A / ✕**. Si une manette libre doit
    être attribuée à J1, utilise **View / Create** sur celle-ci.
+4. Chaque monde solo s’ouvre automatiquement au LAN. Le port apparaît dans le
+   chat. Les autres machines rejoignent le monde depuis **Multijoueur**.
 
 Les données, dont le runtime Java 25 et les mondes, sont dans
 `/userdata/system/minecraft-couchcraft`. Au premier passage depuis l’ancien
 test Couchcraft, l’installateur copie son profil, ses mondes et son cache de
 jeu. L’ancienne entrée gérée reçoit le suffixe `.sh.disabled`.
+
+Pour désactiver le LAN automatique, ferme le jeu et renomme
+`couchcraft-lan-auto-1.0.0-mc26.3.jar` en
+`couchcraft-lan-auto-1.0.0-mc26.3.jar.disabled` dans
+`home/.clauncher/instances/Couchcraft/.minecraft/mods` sous le dossier du port.
+Pour le réactiver, enlève le suffixe `.disabled`.
 
 ## Clavier virtuel
 

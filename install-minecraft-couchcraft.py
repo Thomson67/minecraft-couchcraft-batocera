@@ -37,6 +37,7 @@ PLAY_APP = "usr/bin/CLauncher-start"
 INPUT_HELPER = "entrees-manette-v4.py"
 JAVA = "25.0.5.1+2"
 MOD = "couchcraft.jar"
+LAN_MOD = "couchcraft-lan-auto-1.0.0-mc26.3.jar"
 LEGACY_MOD = "couchcraft-0.2.0.jar"
 CURSOR_CLASS = "dev/couchcraft/render/CouchHud.class"
 CURSOR_CLASS_SHA256 = "9ac03430d733d4ba79be69d311aa6d125d70de294b2e994f404db0daf5930ee7"
@@ -72,6 +73,11 @@ ASSETS = {
     "https://github.com/zortos293/Couchcraft/releases/download/v0.2.0/couchcraft-0.2.0.jar",
     "sha256",
     "f9f2b221233397351dd877fbcd9b5084f377cb923826ecd1f66389e02adce7ed"
+  ],
+  "lan": [
+    f"https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/{LAN_MOD}",
+    "sha256",
+    "eaa1bf9d4d9c54c459bd4bb13ef2457dd33f76e0720a0944c0cf6cd6d6974812"
   ]
 }
 
@@ -492,6 +498,9 @@ def install(root, ports, runtime):
     game = seed_instance(data, java)
     download(ASSETS["fabric"], data / "cache/fabric-installer.jar")
     install_mod(game)
+    lan = game / "mods" / LAN_MOD
+    if not lan.with_suffix(".jar.disabled").is_file():
+        download(ASSETS["lan"], lan)
     enable_fullscreen(game)
     write_atomic(root / SCRIPT, Path(__file__).read_bytes(), 0o755)
     write_atomic(port, port_content(root / SCRIPT, PORT_MARKER), 0o755)
