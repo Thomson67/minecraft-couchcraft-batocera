@@ -33,6 +33,9 @@ LEGACY_MARKER = "# PartyDeck Batocera: Minecraft Java"
 VERSION = "26.3"
 APP = "CLauncher-1.0.3"
 PAD_LAUNCHER = "usr/bin/CLauncher-manette"
+PAD_BRIDGE = "clauncher-gamepad-v1.so"
+ONSCREEN_KEYBOARD = "clavier-virtuel-v1.py"
+ELF_LOADER = Path("/lib64/ld-linux-x86-64.so.2")
 LAUNCHER_SHA256 = "ed2c4a40b842dc6e4df35876d9ca61babeb9ec4a4e028b61aff00ca917d4e4ec"
 PAD_LAUNCHER_SHA256 = "135d7bb148985b8cab8eb86e590b5dc8c2e9594a3360425d8265312ff645aca3"
 JAVA = "25.0.5.1+2"
@@ -48,6 +51,16 @@ PORT = "Minecraft 26.3 (Couchcraft).sh"
 JVM_OPTIONS = "-Dfabric.debug.disableModIds=sodium,iris"
 
 ASSETS = {
+  "gamepad": [
+    "https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/clauncher-gamepad-v1.so",
+    "sha256",
+    "16968da2894cc35c597f7ad553600bad01127fca9f2eb65a6d766cd59395a0e7"
+  ],
+  "keyboard": [
+    "https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/clavier-virtuel-v1.py",
+    "sha256",
+    "cd82454bfda17acdf356dc2422bca8e2d193f93bcc542cfead10cd616cff8104"
+  ],
   "java": [
     "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5.1%2B2/OpenJDK25U-jre_x64_linux_hotspot_25.0.5.1_2.tar.gz",
     "sha256",
@@ -187,6 +200,19 @@ def select_java(runtime, java):
 
 def game_dir(data):
     return data / "instances" / INSTANCE / ".minecraft"
+
+
+def enable_fullscreen(game):
+    options = game / "options.txt"
+    content = options.read_bytes() if options.exists() else b"version:5023\n"
+    updated, matches = re.subn(rb"(?m)^fullscreen:[^\r\n]*", b"fullscreen:true", content)
+    if not matches:
+        newline = b"\r\n" if b"\r\n" in content else b"\n"
+        if content and not content.endswith(b"\n"):
+            updated += newline
+        updated += b"fullscreen:true" + newline
+    if not options.exists() or updated != content:
+        write_atomic(options, updated)
 
 
 def mod_version(path):
@@ -442,11 +468,14 @@ def install(root, ports, runtime):
     check_java25(java)
     install_clauncher(root, ASSETS["launcher"])
     enable_launcher_gamepad(root / APP)
+    download(ASSETS["gamepad"], root / PAD_BRIDGE)
+    download(ASSETS["keyboard"], root / ONSCREEN_KEYBOARD)
     data = data_dir(root)
     migrate_legacy_data(data)
     game = seed_instance(data, java)
     download(ASSETS["fabric"], data / "cache/fabric-installer.jar")
     install_mod(game)
+    enable_fullscreen(game)
     write_atomic(root / SCRIPT, Path(__file__).read_bytes(), 0o755)
     write_atomic(port, port_content(root / SCRIPT, PORT_MARKER), 0o755)
     retire_legacy_port(ports)
@@ -460,11 +489,26 @@ def launcher_env(root):
         if authority.is_file():
             env["XAUTHORITY"] = str(authority)
     env.update(HOME=str(root / "home"), APPDIR=str(root / APP))
+    if env.get("WAYLAND_DISPLAY"):
+        # Keep both windows observable by the keyboard helper on XWayland.
+        env.setdefault("SDL_VIDEO_DRIVER", "x11")
     # The upstream launcher ticks its performance mods option on every startup.
     # Fabric skips these conflicting mod IDs even if the launcher downloads them.
     previous = env.get("JAVA_TOOL_OPTIONS", "").strip()
     env["JAVA_TOOL_OPTIONS"] = f"{previous} {JVM_OPTIONS}".lstrip()
     return env
+
+
+def start_keyboard(root, env):
+    log = root / "clavier-virtuel.log"
+    try:
+        with log.open("wb") as output:
+            subprocess.Popen(
+                [sys.executable, root / ONSCREEN_KEYBOARD, str(os.getpid())],
+                env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+            )
+    except OSError as error:
+        print(f"Clavier virtuel indisponible : {error}", file=sys.stderr)
 
 
 def main():
@@ -493,11 +537,18 @@ def main():
                 raise ValueError("CLauncher est introuvable. Relance l’installateur.")
             if args.action == "verifier":
                 print(f"CLauncher · {app}\nDonnées · {data_dir(root)}")
+                print(f"Journal du clavier virtuel · {root / 'clavier-virtuel.log'}")
                 return 0
             check_updates(root, runtime)
             # Hold the lock until CLauncher exits, including its game session.
             os.set_inheritable(lock.fileno(), True)
             os.chdir(root)
+            start_keyboard(root, env)
+            bridge = root / PAD_BRIDGE
+            if ELF_LOADER.is_file() and bridge.is_file():
+                # --preload scopes the GLFW adapter to CLauncher. Java starts
+                # with its own SDL3 stack and Couchcraft's controller handling.
+                os.execve(ELF_LOADER, [ELF_LOADER, "--preload", bridge, app], env)
             os.execve(app, [app], env)
     except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError, BadZipFile) as error:
         parser.exit(1, f"Minecraft Couchcraft : {error}\n")
