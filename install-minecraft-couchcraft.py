@@ -32,12 +32,7 @@ LEGACY_MARKER = "# PartyDeck Batocera: Minecraft Java"
 
 VERSION = "26.3"
 APP = "CLauncher-1.0.3"
-PAD_LAUNCHER = "usr/bin/CLauncher-manette"
-PAD_BRIDGE = "clauncher-gamepad-v1.so"
-ONSCREEN_KEYBOARD = "clavier-virtuel-v1.py"
-ELF_LOADER = Path("/lib64/ld-linux-x86-64.so.2")
-LAUNCHER_SHA256 = "ed2c4a40b842dc6e4df35876d9ca61babeb9ec4a4e028b61aff00ca917d4e4ec"
-PAD_LAUNCHER_SHA256 = "135d7bb148985b8cab8eb86e590b5dc8c2e9594a3360425d8265312ff645aca3"
+INPUT_HELPER = "entrees-manette-v2.py"
 JAVA = "25.0.5.1+2"
 MOD = "couchcraft.jar"
 LEGACY_MOD = "couchcraft-0.2.0.jar"
@@ -51,15 +46,10 @@ PORT = "Minecraft 26.3 (Couchcraft).sh"
 JVM_OPTIONS = "-Dfabric.debug.disableModIds=sodium,iris"
 
 ASSETS = {
-  "gamepad": [
-    "https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/clauncher-gamepad-v1.so",
+  "input": [
+    "https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/entrees-manette-v2.py",
     "sha256",
-    "16968da2894cc35c597f7ad553600bad01127fca9f2eb65a6d766cd59395a0e7"
-  ],
-  "keyboard": [
-    "https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/clavier-virtuel-v1.py",
-    "sha256",
-    "cd82454bfda17acdf356dc2422bca8e2d193f93bcc542cfead10cd616cff8104"
+    "619140b73e381c4dc2596e0d5ba1c80f3f27ce104ce95e27f9ed5d1700788548"
   ],
   "java": [
     "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5.1%2B2/OpenJDK25U-jre_x64_linux_hotspot_25.0.5.1_2.tar.gz",
@@ -363,22 +353,6 @@ def install_clauncher(root, asset):
         extracted.rename(destination)
 
 
-def enable_launcher_gamepad(app):
-    target = app / PAD_LAUNCHER
-    if target.is_file() and digest(target, "sha256") == PAD_LAUNCHER_SHA256:
-        return
-    original = (app / "usr/bin/CLauncher").read_bytes()
-    offset = 0x22BFD
-    # CLauncher 1.0.3 x86-64: ConfigFlags |= NavEnableKeyboard | NavEnableGamepad.
-    if (hashlib.sha256(original).hexdigest() != LAUNCHER_SHA256
-            or original[offset:offset + 3] != bytes.fromhex("83 08 01")):
-        raise ValueError("Binaire CLauncher 1.0.3 inattendu pour la navigation à la manette.")
-    patched = original[:offset + 2] + b"\x03" + original[offset + 3:]
-    if hashlib.sha256(patched).hexdigest() != PAD_LAUNCHER_SHA256:
-        raise ValueError("Échec de vérification du binaire CLauncher pour la manette.")
-    write_atomic(target, patched, 0o755)
-
-
 def data_dir(root):
     return root / "home/.clauncher"
 
@@ -467,9 +441,7 @@ def install(root, ports, runtime):
         select_java(runtime, install_java25(runtime, ASSETS["java"]))
     check_java25(java)
     install_clauncher(root, ASSETS["launcher"])
-    enable_launcher_gamepad(root / APP)
-    download(ASSETS["gamepad"], root / PAD_BRIDGE)
-    download(ASSETS["keyboard"], root / ONSCREEN_KEYBOARD)
+    download(ASSETS["input"], root / INPUT_HELPER)
     data = data_dir(root)
     migrate_legacy_data(data)
     game = seed_instance(data, java)
@@ -499,16 +471,15 @@ def launcher_env(root):
     return env
 
 
-def start_keyboard(root, env):
-    log = root / "clavier-virtuel.log"
+def start_input_helper(root, env, mode, log_name):
     try:
-        with log.open("wb") as output:
+        with (root / log_name).open("wb") as output:
             subprocess.Popen(
-                [sys.executable, root / ONSCREEN_KEYBOARD, str(os.getpid())],
+                [sys.executable, root / INPUT_HELPER, mode, str(os.getpid())],
                 env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
             )
     except OSError as error:
-        print(f"Clavier virtuel indisponible : {error}", file=sys.stderr)
+        print(f"Entrée manette ({mode}) indisponible : {error}", file=sys.stderr)
 
 
 def main():
@@ -526,7 +497,7 @@ def main():
             if args.action == "installer":
                 install(root, PORTS, runtime)
                 return 0
-            app = root / APP / PAD_LAUNCHER
+            app = root / APP / "AppRun"
             java = runtime / "current/bin/java"
             version = check_java25(java)
             if args.action == "mettre-a-jour":
@@ -537,18 +508,15 @@ def main():
                 raise ValueError("CLauncher est introuvable. Relance l’installateur.")
             if args.action == "verifier":
                 print(f"CLauncher · {app}\nDonnées · {data_dir(root)}")
+                print(f"Journal de la manette CLauncher · {root / 'manette-clauncher.log'}")
                 print(f"Journal du clavier virtuel · {root / 'clavier-virtuel.log'}")
                 return 0
             check_updates(root, runtime)
             # Hold the lock until CLauncher exits, including its game session.
             os.set_inheritable(lock.fileno(), True)
             os.chdir(root)
-            start_keyboard(root, env)
-            bridge = root / PAD_BRIDGE
-            if ELF_LOADER.is_file() and bridge.is_file():
-                # --preload scopes the GLFW adapter to CLauncher. Java starts
-                # with its own SDL3 stack and Couchcraft's controller handling.
-                os.execve(ELF_LOADER, [ELF_LOADER, "--preload", bridge, app], env)
+            start_input_helper(root, env, "souris", "manette-clauncher.log")
+            start_input_helper(root, env, "clavier", "clavier-virtuel.log")
             os.execve(app, [app], env)
     except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError, BadZipFile) as error:
         parser.exit(1, f"Minecraft Couchcraft : {error}\n")

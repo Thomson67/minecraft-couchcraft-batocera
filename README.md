@@ -14,10 +14,9 @@ curl -fsSL https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-bato
 ```
 
 1. Actualise les listes d’EmulationStation. Dans **Ports**, ouvre
-   **Minecraft 26.3 (Couchcraft)**. Dans CLauncher, utilise la croix ou le
-   stick gauche pour sélectionner **Play**, puis **A / ✕** pour valider.
-   **B / ○** annule. CLauncher télécharge Minecraft et Fabric au premier
-   démarrage.
+   **Minecraft 26.3 (Couchcraft)**. Dans CLauncher, déplace le pointeur avec le
+   stick gauche ou la croix, puis clique sur **Play** avec **A / ✕**.
+   CLauncher télécharge Minecraft et Fabric au premier démarrage.
 2. Minecraft démarre en plein écran après l’installation. Dans les menus,
    utilise le stick gauche pour déplacer le pointeur et **A / ✕** pour cliquer.
 3. Pour jouer en écran partagé, ouvre ou crée un monde en **Solo** avec J1.
@@ -49,11 +48,12 @@ Le port recherche au lancement, au maximum une fois par jour, les correctifs
 compatibles Couchcraft 0.2.x et les versions de Temurin 25. En cas d’échec, il
 utilise les versions installées. Minecraft reste en 26.3 et CLauncher en 1.0.3.
 
-Le test fournit les manettes SDL2 à la navigation native ImGui de CLauncher
-1.0.3 via [l’adaptateur GLFW](clauncher-gamepad.c). La bibliothèque est chargée
-dans le lanceur uniquement. Avec le JAR officiel Couchcraft 0.2.0, le test
-affiche aussi le pointeur de J1 quand une manette lui est attribuée et qu’un menu
-est ouvert. Les versions ultérieures de Couchcraft utilisent leur propre rendu.
+Le port convertit le stick et le bouton sud en entrées de souris Linux
+pendant que CLauncher est au premier plan. Il utilise evdev et uinput,
+avec les associations de boutons d’EmulationStation lorsqu’elles sont
+disponibles. Avec le JAR officiel Couchcraft 0.2.0, le test affiche aussi
+le pointeur de J1 quand une manette lui est attribuée et qu’un menu est ouvert.
+Les versions ultérieures de Couchcraft utilisent leur propre rendu.
 
 ```sh
 python3 /userdata/system/minecraft-couchcraft/install-minecraft-couchcraft.py mettre-a-jour
@@ -61,8 +61,9 @@ python3 /userdata/system/minecraft-couchcraft/install-minecraft-couchcraft.py ve
 ```
 
 Les journaux de CLauncher sont dans `home/.clauncher/logs` sous le dossier du
-port. Le journal du clavier se trouve dans `clavier-virtuel.log`. Fabric
-écarte Sodium et Iris pour la session Couchcraft.
+port. Les journaux des entrées à la manette se trouvent dans
+`manette-clauncher.log` et `clavier-virtuel.log`. Fabric écarte Sodium et
+Iris pour la session Couchcraft.
 
 ## Projets utilisés
 
