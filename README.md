@@ -16,6 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-bato
 1. Actualise les listes d’EmulationStation. Dans **Ports**, ouvre
    **Minecraft 26.3 (Couchcraft)**. Dans CLauncher, déplace le pointeur avec le
    stick gauche ou la croix, puis clique sur **Play** avec **A / ✕**.
+   **Start / Options** lance directement **Play** depuis le lanceur.
    CLauncher télécharge Minecraft et Fabric au premier démarrage.
 2. Minecraft démarre en plein écran après l’installation. Dans les menus,
    utilise le stick gauche pour déplacer le pointeur et **A / ✕** pour cliquer.

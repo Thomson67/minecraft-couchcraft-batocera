@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import stat
+from struct import pack, pack_into
 import subprocess
 import sys
 import tarfile
@@ -32,7 +33,8 @@ LEGACY_MARKER = "# PartyDeck Batocera: Minecraft Java"
 
 VERSION = "26.3"
 APP = "CLauncher-1.0.3"
-INPUT_HELPER = "entrees-manette-v3.py"
+PLAY_APP = "usr/bin/CLauncher-start"
+INPUT_HELPER = "entrees-manette-v4.py"
 JAVA = "25.0.5.1+2"
 MOD = "couchcraft.jar"
 LEGACY_MOD = "couchcraft-0.2.0.jar"
@@ -47,9 +49,9 @@ JVM_OPTIONS = "-Dfabric.debug.disableModIds=sodium,iris"
 
 ASSETS = {
   "input": [
-    "https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/entrees-manette-v3.py",
+    "https://raw.githubusercontent.com/Thomson67/minecraft-couchcraft-batocera/test-manette/entrees-manette-v4.py",
     "sha256",
-    "800d0b552f1c7f0e458f86015a486d63cd3e9473117dac131e5452aa30bfad18"
+    "ebb68819fe0771107aa8e6f039261105baf03f807e8df0b300f690065d6c232b"
   ],
   "java": [
     "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5.1%2B2/OpenJDK25U-jre_x64_linux_hotspot_25.0.5.1_2.tar.gz",
@@ -353,6 +355,48 @@ def install_clauncher(root, asset):
         extracted.rename(destination)
 
 
+def launcher_play_shortcut(original):
+    """Add F8 to the existing Play button in the official CLauncher 1.0.3 AppImage."""
+    if hashlib.sha256(original).hexdigest() != "ed2c4a40b842dc6e4df35876d9ca61babeb9ec4a4e028b61aff00ca917d4e4ec":
+        raise ValueError("Binaire CLauncher 1.0.3 inattendu pour le raccourci Start.")
+
+    play_call = 0x26C97   # Launcher::draw_ui, idle branch, Play button only
+    button = 0x114FB0     # ImGui::Button
+    key_pressed = 0xA5AF0 # ImGui::IsKeyPressed(key, flags, owner)
+    executable_header = 0xE8
+    executable_start = 0xA000
+    shortcut = 0x147CA1   # alignment padding before the read-only segment
+
+    # Execute the normal Button() first. If it returns false, tail-call
+    # IsKeyPressed(ImGuiKey_F8, None, Any), whose flags disable key repeat.
+    stack_adjust = bytes.fromhex("48 83 ec 08")
+    call_button = b"\xe8" + pack("<i", button - (shortcut + len(stack_adjust) + 5))
+    key_test = bytes.fromhex(
+        "48 83 c4 08"   # add rsp, 8
+        " 84 c0 75 0e" # test al, al; jump to ret if clicked
+        " bf 43 02 00 00 31 f6 31 d2" # edi = F8, esi = flags, edx = owner
+    )
+    setup = stack_adjust + call_button + key_test
+    tail_call = b"\xe9" + pack("<i", key_pressed - (shortcut + len(setup) + 5))
+    code = setup + tail_call + b"\xc3"
+
+    patched = bytearray(original)
+    patched[play_call:play_call + 5] = b"\xe8" + pack("<i", shortcut - (play_call + 5))
+    patched[shortcut:shortcut + len(code)] = code
+    size = shortcut + len(code) - executable_start
+    pack_into("<QQ", patched, executable_header + 32, size, size)
+    return patched
+
+
+def install_play_shortcut(app_dir):
+    target = app_dir / PLAY_APP
+    original = (app_dir / "usr/bin/CLauncher").read_bytes()
+    patched = launcher_play_shortcut(original)
+    if target.is_file() and target.read_bytes() == patched and os.access(target, os.X_OK):
+        return
+    write_atomic(target, patched, 0o755)
+
+
 def data_dir(root):
     return root / "home/.clauncher"
 
@@ -441,6 +485,7 @@ def install(root, ports, runtime):
         select_java(runtime, install_java25(runtime, ASSETS["java"]))
     check_java25(java)
     install_clauncher(root, ASSETS["launcher"])
+    install_play_shortcut(root / APP)
     download(ASSETS["input"], root / INPUT_HELPER)
     data = data_dir(root)
     migrate_legacy_data(data)
@@ -497,7 +542,7 @@ def main():
             if args.action == "installer":
                 install(root, PORTS, runtime)
                 return 0
-            app = root / APP / "AppRun"
+            app = root / APP / PLAY_APP
             java = runtime / "current/bin/java"
             version = check_java25(java)
             if args.action == "mettre-a-jour":
